@@ -48,15 +48,18 @@ def make_model(input_shape, num_classes):
 
     x = layers.GlobalAveragePooling2D()(x)
     x = layers.Dropout(0.25)(x)
-    units = 1 if num_classes == 2 else num_classes
-    outputs = layers.Dense(units, activation=None)(x)
+ 
+    outputs = layers.Dense(num_classes, activation=None)(x)
 
     return keras.Model(inputs, outputs)
 
 
 # Data cleanup
 num_skipped = 0
-for folder_name in ("Cat", "Dog"):
+class_names = ["Snake", "Cat", "Dog"] # Define your 3 classes here for simplifying
+print(f"Data Clean Up->Dataset class names: {class_names}")
+
+for folder_name in class_names:
     folder_path = os.path.join("PetImages", folder_name)
     for fname in os.listdir(folder_path):
         fpath = os.path.join(folder_path, fname)
@@ -100,7 +103,7 @@ for images, labels in train_ds.take(1):
     for i in range(9):
         ax = plt.subplot(3, 3, i + 1)
         plt.imshow(np.array(images[i]).astype("uint8"))
-        plt.title(int(labels[i]))
+        plt.title(f"Class: {class_names[int(labels[i])]}")
         plt.axis("off")
 
 # Augment image data
@@ -130,32 +133,100 @@ train_ds = train_ds.prefetch(tf.data.AUTOTUNE)
 val_ds = val_ds.prefetch(tf.data.AUTOTUNE)
 
 
+# Make model - Now with 3 classes
+num_classes = 3
 
-# Make model
-model = make_model(input_shape=image_size + (3,), num_classes=2)
-keras.utils.plot_model(model, show_shapes=True)
+# Debug: Check data shapes and classes first
+print("\n" + "="*50)
+print("DEBUGGING DATA")
+print("="*50)
+for images, labels in train_ds.take(1):
+    print(f"Image batch shape: {images.shape}")
+    print(f"Label batch shape: {labels.shape}")
+    print(f"Label dtype: {labels.dtype}")
+    print(f"Sample labels: {labels[:5].numpy()}")
+    print(f"Unique labels in batch: {np.unique(labels.numpy())}")
+    print(f"Min label: {np.min(labels.numpy())}, Max label: {np.max(labels.numpy())}")
+    break
 
+print(f"Dataset class names: {class_names}")
+print(f"Number of classes expected: {len(class_names)}")
 
-# Train model
-epochs = 25
-callbacks = [keras.callbacks.ModelCheckpoint("save_at_{epoch}.keras")]
+# Create the model
+print("\n" + "="*50)
+print("CREATING MODEL")
+print("="*50)
+model = make_model(input_shape=image_size + (3,), num_classes=num_classes)
+
+# Compile model for 3-class classification
+print("\n" + "="*50)
+print("COMPILING MODEL")
+print("="*50)
 
 model.compile(
     optimizer=keras.optimizers.Adam(3e-4),
-    loss=keras.losses.BinaryCrossentropy(from_logits=True),
-    metrics=[keras.metrics.BinaryAccuracy(name="acc")],
+    loss=keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+    metrics=[keras.metrics.SparseCategoricalAccuracy(name="acc")],
 )
 
-model.fit(
-    train_ds,
-    epochs=epochs,
-    callbacks=callbacks,
-    validation_data=val_ds,
-)
+print("Model compiled successfully!")
+model.summary()
+
+# Test a single prediction to make sure everything works
+print("\n" + "="*50)
+print("TESTING MODEL")
+print("="*50)
+for images, labels in train_ds.take(1):
+    print("Testing model prediction...")
+    test_pred = model.predict(images[:1], verbose=0)
+    print(f"Prediction shape: {test_pred.shape}")
+    print(f"Prediction values: {test_pred[0]}")
+    
+    # Apply softmax to see probabilities
+    probs = tf.nn.softmax(test_pred[0])
+    print(f"Probabilities: {probs.numpy()}")
+    print(f"Predicted class: {np.argmax(probs)}")
+    print(f"Actual label: {labels[0].numpy()}")
+    break
+
+# Training configuration
+epochs = 25
+callbacks = [keras.callbacks.ModelCheckpoint("save_at_{epoch}_3class.keras")]
+
+print("\n" + "="*50)
+print("STARTING TRAINING")
+print("="*50)
+
+try:
+    model.fit(
+        train_ds,
+        epochs=epochs,
+        callbacks=callbacks,
+        validation_data=val_ds,
+    )
+    print("Training completed successfully!")
+except Exception as e:
+    print(f"Training failed with error: {e}")
+    import traceback
+    traceback.print_exc()
+    
+    # Try with a smaller subset to debug
+    print("\nTrying with a small subset for debugging...")
+    try:
+        for images, labels in train_ds.take(1):
+            print(f"Single batch shapes - Images: {images.shape}, Labels: {labels.shape}")
+            
+            # Try training on just one batch
+            history = model.fit(images, labels, epochs=1, verbose=1)
+            print("Single batch training successful!")
+            break
+    except Exception as e2:
+        print(f"Single batch training also failed: {e2}")
+        traceback.print_exc()
 
 # Save the weights of the trained model
 
-filepath = 'saved.weights.h5'
+filepath = 'saved_3class.weights.h5'
 model.save_weights(filepath)
 
 
